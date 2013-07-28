@@ -278,7 +278,6 @@ AsyncAnimatedGif::push_fragment(unsigned char *frame, int width, int height,
     buffer_type buf_type, unsigned char *fragment, int x, int y, int w, int h)
 {
     int start = y*width*3 + x*3;
-    unsigned char *fragmentp = fragment;
 
     switch (buf_type) {
     case BUF_RGB:

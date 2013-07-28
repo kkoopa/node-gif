@@ -278,9 +278,6 @@ DynamicGifStack::EIO_GifEncode(eio_req *req)
 
     gif->construct_gif_data(data, top);
 
-    buffer_type pbt = (gif->buf_type == BUF_BGR || gif->buf_type == BUF_BGRA) ?
-        BUF_BGRA : BUF_RGBA;
-
     try {
         GifEncoder encoder(data, gif->width, gif->height, BUF_RGB);
         encoder.set_transparency_color(gif->transparency_color);
