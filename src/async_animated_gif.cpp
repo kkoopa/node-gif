@@ -6,8 +6,6 @@
 #include "gif_encoder.h"
 #include "async_animated_gif.h"
 
-#include "loki/ScopeGuard.h"
-
 using namespace v8;
 using namespace node;
 
@@ -304,14 +302,13 @@ void AsyncAnimatedGif::AnimatedGifEncodeWorker::Execute() {
         }
 
         char **fragments = find_files(fragment_path);
-        LOKI_ON_BLOCK_EXIT(free_file_list, fragments);
         int nfragments = file_list_length(fragments);
 
         qsort(fragments, nfragments, sizeof(char *), fragment_sort);
 
         unsigned char *frame = init_frame(gif_obj->width, gif_obj->height, gif_obj->transparency_color);
-        LOKI_ON_BLOCK_EXIT(free, frame);
         if (!frame) {
+            free_file_list(fragments);
             errmsg = strdup("malloc failed in AsyncAnimatedGif::AnimatedGifEncodeWorker::Execute().");
             return;
         }
@@ -321,18 +318,29 @@ void AsyncAnimatedGif::AnimatedGifEncodeWorker::Execute() {
                 gif_obj->tmp_dir.c_str(), push_id, fragments[i]);
             FILE *in = fopen(fragment_path, "r");
             if (!in) {
+                free_file_list(fragments);
+                free(frame);
                 char error[600];
                 snprintf(error, 600, "Failed opening %s in AsyncAnimatedGif::AnimatedGifEncodeWorker::Execute().",
                     fragment_path);
                 errmsg = strdup(error);
                 return;
             }
-            LOKI_ON_BLOCK_EXIT(fclose, in);
             int size = file_size(fragment_path);
             unsigned char *data = (unsigned char *)malloc(sizeof(*data)*size);
-            LOKI_ON_BLOCK_EXIT(free, data);
+            if (!data) {
+                free_file_list(fragments);
+                free(frame);
+                fclose(in);
+                errmsg = strdup("malloc failed in AsyncAnimatedGif::AnimatedGifEncodeWorker::Execute().");
+                return;
+            }
             int read = fread(data, sizeof *data, size, in);
             if (read != size) {
+                free_file_list(fragments);
+                free(frame);
+                fclose(in);
+                free(data);
                 char error[600];
                 snprintf(error, 600, "Error - should have read %d but read only %d from %s in AsyncAnimatedGif::AnimatedGifEncodeWorker::Execute()", size, read, fragment_path);
                 errmsg = strdup(error);
@@ -341,8 +349,12 @@ void AsyncAnimatedGif::AnimatedGifEncodeWorker::Execute() {
             Rect dims = rect_dims(fragments[i]);
             push_fragment(frame, gif_obj->width, gif_obj->height, gif_obj->buf_type,
                 data, dims.x, dims.y, dims.w, dims.h);
+            fclose(in);
+            free(data);
         }
         encoder.new_frame(frame);
+        free_file_list(fragments);
+        free(frame);
     }
     encoder.finish();
 

@@ -3,8 +3,6 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "loki/ScopeGuard.h"
-
 #include "gif_encoder.h"
 #include "palette.h"
 #include "quantize.h"
@@ -142,26 +140,35 @@ GifEncoder::encode()
 
     int color_map_size = 256;
     ColorMapObject *output_color_map = MakeMapObject(256, ext_web_safe_palette);
-    LOKI_ON_BLOCK_EXIT(FreeMapObject, output_color_map);
-    if (!output_color_map)
+    if (!output_color_map) {
         throw "MakeMapObject in GifEncoder::encode failed";
+    }
 
     GifByteType *gif_buf = (GifByteType *)malloc(sizeof(GifByteType)*width*height);
-    LOKI_ON_BLOCK_EXIT(free, gif_buf);
-    if (!gif_buf)
+    if (!gif_buf) {
+        FreeMapObject(output_color_map);
         throw "malloc in GifEncoder::encode failed";
+    }
 
-    if (web_safe_quantize(width, height, rgb.red, rgb.green, rgb.blue, gif_buf) == GIF_ERROR)
+    if (web_safe_quantize(width, height, rgb.red, rgb.green, rgb.blue, gif_buf) == GIF_ERROR) {
+        FreeMapObject(output_color_map);
+        free(gif_buf);
         throw "web_safe_quantize in GifEncoder::encode failed";
+    }
 
     GifFileType *gif_file = EGifOpen(&gif, gif_writer);
-    LOKI_ON_BLOCK_EXIT(EGifCloseFile, gif_file);
-    if (!gif_file)
+    if (!gif_file) {
+        FreeMapObject(output_color_map);
+        free(gif_buf);
         throw "EGifOpen in GifEncoder::encode failed";
+    }
 
     if (EGifPutScreenDesc(gif_file, width, height,
         color_map_size, 0, output_color_map) == GIF_ERROR)
     {
+        FreeMapObject(output_color_map);
+        free(gif_buf);
+        EGifCloseFile(gif_file);
         throw "EGifPutScreenDesc in GifEncoder::encode failed";
     }
 
@@ -173,20 +180,36 @@ GifEncoder::encode()
                 0, 0, // no time delay
                 i // transparency color index
             };
-            EGifPutExtension(gif_file, GRAPHICS_EXT_FUNC_CODE, 4, extension);
+            if (EGifPutExtension(gif_file, GRAPHICS_EXT_FUNC_CODE, 4, extension) == GIF_ERROR) {
+                FreeMapObject(output_color_map);
+                free(gif_buf);
+                EGifCloseFile(gif_file);
+                throw "EGifPutExtension in GifEncoder::encode failed";
+            }
         }
     }
 
     if (EGifPutImageDesc(gif_file, 0, 0, width, height, FALSE, NULL) == GIF_ERROR) {
+        FreeMapObject(output_color_map);
+        free(gif_buf);
+        EGifCloseFile(gif_file);
         throw "EGifPutImageDesc in GifEncoder::encode failed";
     }
 
     GifByteType *gif_bufp = gif_buf;
     for (int i = 0; i < height; i++) {
-        if (EGifPutLine(gif_file, gif_bufp, width) == GIF_ERROR)
+        if (EGifPutLine(gif_file, gif_bufp, width) == GIF_ERROR) {
+            FreeMapObject(output_color_map);
+            free(gif_buf);
+            EGifCloseFile(gif_file);
             throw "EGifPutLine in GifEncoder::encode failed";
+        }
         gif_bufp += width;
     }
+
+    FreeMapObject(output_color_map);
+    free(gif_buf);
+    EGifCloseFile(gif_file);
 }
 
 void
