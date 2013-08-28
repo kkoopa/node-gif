@@ -1,11 +1,10 @@
 var fs  = require('fs');
-var sys = require('sys');
-var Gif = require('gif').Gif;
+var Gif = require('../build/Release/gif').Gif;
 var Buffer = require('buffer').Buffer;
 
-var terminal = fs.readFileSync('./terminal.rgb');
+var terminal = fs.readFileSync('./terminal.rgba');
 
-var gif = new Gif(terminal, 720, 400, 'rgb').encodeSync();
+var gif = new Gif(terminal, 720, 400, 'rgba').encodeSync();
 
 fs.writeFileSync('./terminal.gif', gif.toString('binary'), 'binary');
 

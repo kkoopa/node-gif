@@ -1,7 +1,6 @@
-var GifLib = require('gif');
+var GifLib = require('../../build/Release/gif');
 var Buffer = require('buffer').Buffer;
 var fs = require('fs');
-var sys = require('sys');
 
 var chunkDirs = fs.readdirSync('.').sort().filter(
     function (f) {

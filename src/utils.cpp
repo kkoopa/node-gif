@@ -13,7 +13,7 @@ find_files(const char *path)
 {
     char **files = NULL;
     DIR *dp;
-    struct dirent *dirp; 
+    struct dirent *dirp;
     int i = 0;
 
     if ((dp = opendir(path)) == NULL) {
@@ -102,4 +102,3 @@ is_dir(const char *path)
     if (stat(path, &moo) == -1) return false;
     return S_ISDIR(moo.st_mode);
 }
-

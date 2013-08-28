@@ -19,7 +19,7 @@ web_safe_quantize(int width, int height,
     assert(out);
 
     // naive quantization
-    
+
     typedef std::map<int, char> IdxCache;
     IdxCache cache;
 
@@ -39,4 +39,3 @@ web_safe_quantize(int width, int height,
 
     return GIF_OK;
 }
-

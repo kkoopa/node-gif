@@ -11,7 +11,7 @@ using namespace v8;
 extern "C" void
 init(Handle<Object> target)
 {
-    HandleScope scope;
+    NanScope();
     Gif::Initialize(target);
     //FixedGifStack::Initialize(target);
     DynamicGifStack::Initialize(target);
@@ -19,3 +19,4 @@ init(Handle<Object> target)
     AsyncAnimatedGif::Initialize(target);
 }
 
+NODE_MODULE(gif, init)

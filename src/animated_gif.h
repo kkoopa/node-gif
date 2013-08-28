@@ -12,12 +12,11 @@ class AnimatedGif : public node::ObjectWrap {
     buffer_type buf_type;
 
     AnimatedGifEncoder gif_encoder;
-    unsigned char *data;
     Color transparency_color;
+    unsigned char *data;
 
 public:
-
-    v8::Persistent<v8::Function> ondata;
+    NanCallback *ondata;
 
     static void Initialize(v8::Handle<v8::Object> target);
 
@@ -25,14 +24,19 @@ public:
     v8::Handle<v8::Value> Push(unsigned char *data_buf, int x, int y, int w, int h);
     void EndPush();
 
-    static v8::Handle<v8::Value> New(const v8::Arguments &args);
-    static v8::Handle<v8::Value> Push(const v8::Arguments &args);
-    static v8::Handle<v8::Value> EndPush(const v8::Arguments &args);
-    static v8::Handle<v8::Value> End(const v8::Arguments &args);
-    static v8::Handle<v8::Value> GetGif(const v8::Arguments &args);
-    static v8::Handle<v8::Value> SetOutputFile(const v8::Arguments &args);
-    static v8::Handle<v8::Value> SetOutputCallback(const v8::Arguments &args);
+    ~AnimatedGif() {
+        if (ondata) {
+            delete ondata;
+        }
+    }
+
+    static NAN_METHOD(New);
+    static NAN_METHOD(Push);
+    static NAN_METHOD(EndPush);
+    static NAN_METHOD(End);
+    static NAN_METHOD(GetGif);
+    static NAN_METHOD(SetOutputFile);
+    static NAN_METHOD(SetOutputCallback);
 };
 
 #endif
-

@@ -39,8 +39,6 @@ class DynamicGifStack : public node::ObjectWrap {
 
     std::pair<Point, Point> optimal_dimension();
 
-    static void EIO_GifEncode(eio_req *req);
-    static int EIO_GifEncodeAfter(eio_req *req);
     void construct_gif_data(unsigned char *data, Point &top);
 
 public:
@@ -48,15 +46,29 @@ public:
     DynamicGifStack(buffer_type bbuf_type);
     ~DynamicGifStack();
 
+    class DynamicGifEncodeWorker : public GifEncoder::EncodeWorker {
+    public:
+        DynamicGifEncodeWorker(NanCallback *callback, DynamicGifStack *gif) : GifEncoder::EncodeWorker(callback), gif_obj(gif) {
+        };
+
+        void Execute();
+        void HandleOKCallback();
+        void HandleErrorCallback();
+
+    private:
+        DynamicGifStack *gif_obj;
+    };
+
+
     v8::Handle<v8::Value> Push(unsigned char *buf_data, size_t buf_len, int x, int y, int w, int h);
     v8::Handle<v8::Value> Dimensions();
     v8::Handle<v8::Value> GifEncodeSync();
 
-    static v8::Handle<v8::Value> New(const v8::Arguments &args);
-    static v8::Handle<v8::Value> Push(const v8::Arguments &args);
-    static v8::Handle<v8::Value> Dimensions(const v8::Arguments &args);
-    static v8::Handle<v8::Value> GifEncodeSync(const v8::Arguments &args);
-    static v8::Handle<v8::Value> GifEncodeAsync(const v8::Arguments &args);
+    static NAN_METHOD(New);
+    static NAN_METHOD(Push);
+    static NAN_METHOD(Dimensions);
+    static NAN_METHOD(GifEncodeSync);
+    static NAN_METHOD(GifEncodeAsync);
 };
 
 #endif

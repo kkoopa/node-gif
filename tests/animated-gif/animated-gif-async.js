@@ -1,7 +1,7 @@
-var GifLib = require('gif');
+var GifLib = require('../../build/Release/gif');
 var Buffer = require('buffer').Buffer;
 var fs = require('fs');
-var sys = require('sys');
+var temp = require('temp');
 
 var chunkDirs = fs.readdirSync('.').sort().filter(
     function (f) {
@@ -24,7 +24,8 @@ function rectDim(fileName) {
 
 var animatedGif = new GifLib.AsyncAnimatedGif(720,400);
 animatedGif.setOutputFile('animated-async.gif');
-animatedGif.setTmpDir('./moo');
+
+animatedGif.setTmpDir(temp.mkdirSync());
 
 chunkDirs.forEach(function (dir) {
     console.log(dir);
@@ -49,4 +50,3 @@ animatedGif.encode(function (status, error) {
         console.log('failed writing animated gif: ' + error);
     }
 });
-

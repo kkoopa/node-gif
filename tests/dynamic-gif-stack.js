@@ -1,6 +1,5 @@
-var GifLib = require('gif');
+var GifLib = require('../build/Release/gif');
 var fs = require('fs');
-var sys = require('sys');
 var Buffer = require('buffer').Buffer;
 
 var gifStack = new GifLib.DynamicGifStack('rgba');
@@ -26,6 +25,6 @@ fs.writeFileSync('dynamic.gif', gifStack.encodeSync().toString('binary'), 'binar
 
 var dims = gifStack.dimensions();
 
-sys.log("GIF located at (" + dims.x + "," + dims.y + ") with width " +
+console.log("GIF located at (" + dims.x + "," + dims.y + ") with width " +
     dims.width + " and height " + dims.height);
 

@@ -5,7 +5,6 @@
 #include "utils.h"
 #include "gif_encoder.h"
 #include "async_animated_gif.h"
-#include "buffer_compat.h"
 
 #include "loki/ScopeGuard.h"
 
@@ -15,7 +14,7 @@ using namespace node;
 void
 AsyncAnimatedGif::Initialize(Handle<Object> target)
 {
-    HandleScope scope;
+    NanScope();
 
     Local<FunctionTemplate> t = FunctionTemplate::New(New);
     t->InstanceTemplate()->SetInternalFieldCount(1);
@@ -32,27 +31,13 @@ AsyncAnimatedGif::AsyncAnimatedGif(int wwidth, int hheight, buffer_type bbuf_typ
     transparency_color(0xFF, 0xFF, 0xFE),
     push_id(0), fragment_id(0) {}
 
-void
-AsyncAnimatedGif::EIO_Push(eio_req *req)
-{
-    push_request *push_req = (push_request *)req->data;
-
-    if (!is_dir(push_req->tmp_dir)) {
-        if (mkdir(push_req->tmp_dir, 0775) == -1) {
-            // there is no way to return this error to node as this call was
-            // async with no callback
-            fprintf(stderr, "Could not mkdir(%s) in AsyncAnimatedGif::EIO_Push.\n",
-                push_req->tmp_dir);
-            return;
-        }
-    }
-
+void PushWorker::Execute() {
     char fragment_dir[512];
-    snprintf(fragment_dir, 512, "%s/%d", push_req->tmp_dir, push_req->push_id);
+    snprintf(fragment_dir, 512, "%s/%d", tmp_dir, push_id);
 
     if (!is_dir(fragment_dir)) {
         if (mkdir(fragment_dir, 0775) == -1) {
-            fprintf(stderr, "Could not mkdir(%s) in AsyncAnimatedGif::EIO_Push.\n",
+            fprintf(stderr, "Could not mkdir(%s) in PushWorker::Execute().\n",
                 fragment_dir);
             return;
         }
@@ -60,40 +45,33 @@ AsyncAnimatedGif::EIO_Push(eio_req *req)
 
     char filename[512];
     snprintf(filename, 512, "%s/%d/rect-%d-%d-%d-%d-%d.dat",
-        push_req->tmp_dir, push_req->push_id, push_req->fragment_id,
-        push_req->x, push_req->y, push_req->w, push_req->h);
+        tmp_dir, push_id, fragment_id,
+        x, y, w, h);
     FILE *out = fopen(filename, "w+");
-    LOKI_ON_BLOCK_EXIT(fclose, out);
     if (!out) {
-        fprintf(stderr, "Failed to open %s in AsyncAnimatedGif::EIO_Push.\n",
+        fprintf(stderr, "Failed to open %s in PushWorker::Execute().\n",
             filename);
         return;
     }
-    int written = fwrite(push_req->data, sizeof(unsigned char), push_req->data_size, out);
-    if (written != push_req->data_size) {
+    int written = fwrite(data, sizeof(unsigned char), data_size, out);
+    if (written != data_size) {
         fprintf(stderr, "Failed to write all data to %s. Wrote only %d of %d.\n",
-            filename, written, push_req->data_size);
+            filename, written, data_size);
     }
 
-    return;
+    fclose(out);
 }
 
-int
-AsyncAnimatedGif::EIO_PushAfter(eio_req *req)
-{
-    ev_unref(EV_DEFAULT_UC);
+void PushWorker::HandleOKCallback() {
+}
 
-    push_request *push_req = (push_request *)req->data;
-    free(push_req->data);
-    free(push_req);
-
-    return 0;
+void PushWorker::HandleErrorCallback() {
 }
 
 Handle<Value>
 AsyncAnimatedGif::Push(unsigned char *data_buf, int x, int y, int w, int h)
 {
-    HandleScope scope;
+    NanScope();
 
     if (tmp_dir.empty())
         throw "Tmp dir is not set. Use .setTmpDir to set it before pushing.";
@@ -101,31 +79,11 @@ AsyncAnimatedGif::Push(unsigned char *data_buf, int x, int y, int w, int h)
     if (output_file.empty())
         throw "Output file is not set. Use .setOutputFile to set it before pushing.";
 
-    push_request *push_req = (push_request *)malloc(sizeof(*push_req));
-    if (!push_req)
-        throw "malloc in AsyncAnimatedGif::Push failed.";
+    NanAsyncQueueWorker(new PushWorker(push_id, fragment_id++, tmp_dir.c_str(), data_buf, x, y, w, h));
 
-    push_req->data = (unsigned char *)malloc(sizeof(*push_req->data)*w*h*3);
-    if (!push_req->data) {
-        free(push_req);
-        throw "malloc in AsyncAnimatedGif::Push failed.";
-    }
-
-    memcpy(push_req->data, data_buf, w*h*3);
-    push_req->push_id = push_id;
-    push_req->fragment_id = fragment_id++;
-    push_req->tmp_dir = tmp_dir.c_str();
-    push_req->data_size = w*h*3;
-    push_req->x = x;
-    push_req->y = y;
-    push_req->w = w;
-    push_req->h = h;
-
-    eio_custom(EIO_Push, EIO_PRI_DEFAULT, EIO_PushAfter, push_req);
-    ev_ref(EV_DEFAULT_UC);
-
-    return Undefined();
+    return scope.Close(Undefined());
 }
+
 
 void
 AsyncAnimatedGif::EndPush()
@@ -134,28 +92,27 @@ AsyncAnimatedGif::EndPush()
     fragment_id = 0;
 }
 
-Handle<Value>
-AsyncAnimatedGif::New(const Arguments &args)
+NAN_METHOD(AsyncAnimatedGif::New)
 {
-    HandleScope scope;
+    NanScope();
 
     if (args.Length() < 2)
-        return VException("At least two arguments required - width, height, [and input buffer type]");
+        return NanThrowError("At least two arguments required - width, height, [and input buffer type]");
     if (!args[0]->IsInt32())
-        return VException("First argument must be integer width.");
+        return NanThrowTypeError("First argument must be integer width.");
     if (!args[1]->IsInt32())
-        return VException("Second argument must be integer height.");
+        return NanThrowTypeError("Second argument must be integer height.");
 
     buffer_type buf_type = BUF_RGB;
     if (args.Length() == 3) {
         if (!args[2]->IsString())
-            return VException("Third argument must be 'rgb', 'bgr', 'rgba' or 'bgra'.");
+            return NanThrowTypeError("Third argument must be 'rgb', 'bgr', 'rgba' or 'bgra'.");
 
         String::AsciiValue bts(args[2]->ToString());
         if (!(str_eq(*bts, "rgb") || str_eq(*bts, "bgr") ||
             str_eq(*bts, "rgba") || str_eq(*bts, "bgra")))
         {
-            return VException("Third argument must be 'rgb', 'bgr', 'rgba' or 'bgra'.");
+            return NanThrowTypeError("Third argument must be 'rgb', 'bgr', 'rgba' or 'bgra'.");
         }
 
         if (str_eq(*bts, "rgb"))
@@ -167,83 +124,79 @@ AsyncAnimatedGif::New(const Arguments &args)
         else if (str_eq(*bts, "bgra"))
             buf_type = BUF_BGRA;
         else
-            return VException("Third argument wasn't 'rgb', 'bgr', 'rgba' or 'bgra'.");
+            return NanThrowTypeError("Third argument wasn't 'rgb', 'bgr', 'rgba' or 'bgra'.");
     }
 
     int w = args[0]->Int32Value();
     int h = args[1]->Int32Value();
 
     if (w < 0)
-        return VException("Width smaller than 0.");
+        return NanThrowRangeError("Width smaller than 0.");
     if (h < 0)
-        return VException("Height smaller than 0.");
+        return NanThrowRangeError("Height smaller than 0.");
 
     AsyncAnimatedGif *gif = new AsyncAnimatedGif(w, h, buf_type);
     gif->Wrap(args.This());
-    return args.This();
+    NanReturnValue(args.This());
 }
 
-Handle<Value>
-AsyncAnimatedGif::Push(const Arguments &args)
+NAN_METHOD(AsyncAnimatedGif::Push)
 {
-    HandleScope scope;
+    NanScope();
 
     if (!Buffer::HasInstance(args[0]))
-        return VException("First argument must be Buffer.");
+        return NanThrowTypeError("First argument must be Buffer.");
     if (!args[1]->IsInt32())
-        return VException("Second argument must be integer x.");
+        return NanThrowTypeError("Second argument must be integer x.");
     if (!args[2]->IsInt32())
-        return VException("Third argument must be integer y.");
+        return NanThrowTypeError("Third argument must be integer y.");
     if (!args[3]->IsInt32())
-        return VException("Fourth argument must be integer w.");
+        return NanThrowTypeError("Fourth argument must be integer w.");
     if (!args[4]->IsInt32())
-        return VException("Fifth argument must be integer h.");
+        return NanThrowTypeError("Fifth argument must be integer h.");
 
     AsyncAnimatedGif *gif = ObjectWrap::Unwrap<AsyncAnimatedGif>(args.This());
-    //    Buffer *data_buf = ObjectWrap::Unwrap<Buffer>(args[0]->ToObject());
-    //    unsigned char *buf = (unsigned char *)data_buf->data();
     int x = args[1]->Int32Value();
     int y = args[2]->Int32Value();
     int w = args[3]->Int32Value();
     int h = args[4]->Int32Value();
 
     if (x < 0)
-        return VException("Coordinate x smaller than 0.");
+        return NanThrowRangeError("Coordinate x smaller than 0.");
     if (y < 0)
-        return VException("Coordinate y smaller than 0.");
+        return NanThrowRangeError("Coordinate y smaller than 0.");
     if (w < 0)
-        return VException("Width smaller than 0.");
+        return NanThrowRangeError("Width smaller than 0.");
     if (h < 0)
-        return VException("Height smaller than 0.");
+        return NanThrowRangeError("Height smaller than 0.");
     if (x >= gif->width)
-        return VException("Coordinate x exceeds AsyncAnimatedGif's dimensions.");
+        return NanThrowRangeError("Coordinate x exceeds AsyncAnimatedGif's dimensions.");
     if (y >= gif->height)
-        return VException("Coordinate y exceeds AsyncAnimatedGif's dimensions.");
+        return NanThrowRangeError("Coordinate y exceeds AsyncAnimatedGif's dimensions.");
     if (x+w > gif->width)
-        return VException("Pushed fragment exceeds AsyncAnimatedGif's width.");
+        return NanThrowRangeError("Pushed fragment exceeds AsyncAnimatedGif's width.");
     if (y+h > gif->height)
-        return VException("Pushed fragment exceeds AsyncAnimatedGif's height.");
+        return NanThrowRangeError("Pushed fragment exceeds AsyncAnimatedGif's height.");
 
     try {
-        char *buf_data = BufferData(args[0]->ToObject());
+        char *buf_data = Buffer::Data(args[0]->ToObject());
         gif->Push((unsigned char*)buf_data, x, y, w, h);
     }
     catch (const char *err) {
-        return VException(err);
+        return NanThrowError(err);
     }
 
-    return Undefined();
+    NanReturnUndefined();
 }
 
-Handle<Value>
-AsyncAnimatedGif::EndPush(const Arguments &args)
+NAN_METHOD(AsyncAnimatedGif::EndPush)
 {
-    HandleScope scope;
+    NanScope();
 
     AsyncAnimatedGif *gif = ObjectWrap::Unwrap<AsyncAnimatedGif>(args.This());
     gif->EndPush();
 
-    return Undefined();
+    NanReturnUndefined();
 }
 
 int
@@ -301,6 +254,28 @@ AsyncAnimatedGif::push_fragment(unsigned char *frame, int width, int height,
             }
         }
         break;
+    case BUF_RGBA:
+        for (int i = 0; i < h; i++) {
+            unsigned char *framep = &frame[start + i*width*3];
+            for (int j = 0; j < w; j++) {
+                *framep++ = *fragment++;
+                *framep++ = *fragment++;
+                *framep++ = *fragment++;
+                fragment++;
+            }
+        }
+        break;
+    case BUF_BGRA:
+        for (int i = 0; i < h; i++) {
+            unsigned char *framep = &frame[start + i*width*3];
+            for (int j = 0; j < w; j++) {
+                *framep++ = *(fragment + 2);
+                *framep++ = *(fragment + 1);
+                *framep++ = *fragment;
+                framep += 4;
+            }
+        }
+        break;
     }
 }
 
@@ -312,24 +287,19 @@ AsyncAnimatedGif::rect_dims(const char *fragment_name)
     return Rect(x, y, w, h);
 }
 
-void
-AsyncAnimatedGif::EIO_Encode(eio_req *req)
-{
-    async_encode_request *enc_req = (async_encode_request *)req->data;
-    AsyncAnimatedGif *gif = (AsyncAnimatedGif *)enc_req->gif_obj;
+void AsyncAnimatedGif::AnimatedGifEncodeWorker::Execute() {
+    AnimatedGifEncoder encoder(gif_obj->width, gif_obj->height, BUF_RGB);
+    encoder.set_output_file(gif_obj->output_file.c_str());
+    encoder.set_transparency_color(gif_obj->transparency_color);
 
-    AnimatedGifEncoder encoder(gif->width, gif->height, BUF_RGB);
-    encoder.set_output_file(gif->output_file.c_str());
-    encoder.set_transparency_color(gif->transparency_color);
-
-    for (size_t push_id = 0; push_id < gif->push_id; push_id++) {
+    for (size_t push_id = 0; push_id < gif_obj->push_id; push_id++) {
         char fragment_path[512];
-        snprintf(fragment_path, 512, "%s/%d", gif->tmp_dir.c_str(), push_id);
+        snprintf(fragment_path, 512, "%s/%lu", gif_obj->tmp_dir.c_str(), push_id);
         if (!is_dir(fragment_path)) {
             char error[600];
-            snprintf(error, 600, "Error in AsyncAnimatedGif::EIO_Encode %s is not a dir.",
+            snprintf(error, 600, "Error in AsyncAnimatedGif::AnimatedGifEncodeWorker::Execute() %s is not a dir.",
                 fragment_path);
-            enc_req->error = strdup(error);
+            errmsg = strdup(error);
             return;
         }
 
@@ -339,22 +309,22 @@ AsyncAnimatedGif::EIO_Encode(eio_req *req)
 
         qsort(fragments, nfragments, sizeof(char *), fragment_sort);
 
-        unsigned char *frame = init_frame(gif->width, gif->height, gif->transparency_color);
+        unsigned char *frame = init_frame(gif_obj->width, gif_obj->height, gif_obj->transparency_color);
         LOKI_ON_BLOCK_EXIT(free, frame);
         if (!frame) {
-            enc_req->error = strdup("malloc failed in AsyncAnimatedGif::EIO_Encode.");
+            errmsg = strdup("malloc failed in AsyncAnimatedGif::AnimatedGifEncodeWorker::Execute().");
             return;
         }
 
         for (int i = 0; i < nfragments; i++) {
-            snprintf(fragment_path, 512, "%s/%d/%s",
-                gif->tmp_dir.c_str(), push_id, fragments[i]);
+            snprintf(fragment_path, 512, "%s/%lu/%s",
+                gif_obj->tmp_dir.c_str(), push_id, fragments[i]);
             FILE *in = fopen(fragment_path, "r");
             if (!in) {
                 char error[600];
-                snprintf(error, 600, "Failed opening %s in AsyncAnimatedGif::EIO_Encode.",
+                snprintf(error, 600, "Failed opening %s in AsyncAnimatedGif::AnimatedGifEncodeWorker::Execute().",
                     fragment_path);
-                enc_req->error = strdup(error);
+                errmsg = strdup(error);
                 return;
             }
             LOKI_ON_BLOCK_EXIT(fclose, in);
@@ -364,12 +334,12 @@ AsyncAnimatedGif::EIO_Encode(eio_req *req)
             int read = fread(data, sizeof *data, size, in);
             if (read != size) {
                 char error[600];
-                snprintf(error, 600, "Error - should have read %d but read only %d from %s in AsyncAnimatedGif::EIO_Encode", size, read, fragment_path);
-                enc_req->error = strdup(error);
+                snprintf(error, 600, "Error - should have read %d but read only %d from %s in AsyncAnimatedGif::AnimatedGifEncodeWorker::Execute()", size, read, fragment_path);
+                errmsg = strdup(error);
                 return;
             }
             Rect dims = rect_dims(fragments[i]);
-            push_fragment(frame, gif->width, gif->height, gif->buf_type,
+            push_fragment(frame, gif_obj->width, gif_obj->height, gif_obj->buf_type,
                 data, dims.x, dims.y, dims.w, dims.h);
         }
         encoder.new_frame(frame);
@@ -379,105 +349,86 @@ AsyncAnimatedGif::EIO_Encode(eio_req *req)
     return;
 }
 
-int
-AsyncAnimatedGif::EIO_EncodeAfter(eio_req *req)
-{
-    HandleScope scope;
-
-    ev_unref(EV_DEFAULT_UC);
-    async_encode_request *enc_req = (async_encode_request *)req->data;
-
-    Handle<Value> argv[2];
-
-    if (enc_req->error) {
-        argv[0] = False();
-        argv[1] = ErrorException(enc_req->error);
-    }
-    else {
-        argv[0] = True();
-        argv[1] = Undefined();
-    }
+void AsyncAnimatedGif::AnimatedGifEncodeWorker::HandleOKCallback() {
+    NanScope();
+    Local<Value> argv[2] = {True(), Undefined()};
 
     TryCatch try_catch; // don't quite see the necessity of this
 
-    enc_req->callback->Call(Context::GetCurrent()->Global(), 2, argv);
+    callback->Call(2, argv);
 
     if (try_catch.HasCaught())
         FatalException(try_catch);
 
-    enc_req->callback.Dispose();
-
-    enc_req->gif_obj->Unref();
-    free(enc_req);
-
-    return 0;
+    gif_obj->Unref();
 }
 
-Handle<Value>
-AsyncAnimatedGif::Encode(const Arguments &args)
+void AsyncAnimatedGif::AnimatedGifEncodeWorker::HandleErrorCallback() {
+    NanScope();
+    Local<Value> argv[2] = {False(), Exception::Error(String::New(errmsg))};
+
+    TryCatch try_catch; // don't quite see the necessity of this
+
+    callback->Call(2, argv);
+
+    if (try_catch.HasCaught())
+        FatalException(try_catch);
+
+    gif_obj->Unref();
+}
+
+NAN_METHOD(AsyncAnimatedGif::Encode)
 {
-    HandleScope scope;
+    NanScope();
 
     if (args.Length() != 1)
-        return VException("One argument required - callback function.");
+        return NanThrowError("One argument required - callback function.");
 
     if (!args[0]->IsFunction())
-        return VException("First argument must be a function.");
+        return NanThrowTypeError("First argument must be a function.");
 
     Local<Function> callback = Local<Function>::Cast(args[0]);
     AsyncAnimatedGif *gif = ObjectWrap::Unwrap<AsyncAnimatedGif>(args.This());
 
-    async_encode_request *enc_req = (async_encode_request *)malloc(sizeof(*enc_req));
-    if (!enc_req)
-        return VException("malloc in AsyncAnimatedGif::Encode failed.");
+    NanAsyncQueueWorker(new AsyncAnimatedGif::AnimatedGifEncodeWorker(new NanCallback(callback), gif));
 
-    enc_req->callback = Persistent<Function>::New(callback);
-    enc_req->gif_obj = gif;
-    enc_req->error = NULL;
-
-    eio_custom(EIO_Encode, EIO_PRI_DEFAULT, EIO_EncodeAfter, enc_req);
-
-    ev_ref(EV_DEFAULT_UC);
     gif->Ref();
 
-    return Undefined();
+    NanReturnUndefined();
 }
 
-Handle<Value>
-AsyncAnimatedGif::SetOutputFile(const Arguments &args)
+NAN_METHOD(AsyncAnimatedGif::SetOutputFile)
 {
-    HandleScope scope;
+    NanScope();
 
     if (args.Length() != 1)
-        return VException("One argument required - path to output file.");
+        return NanThrowError("One argument required - path to output file.");
 
     if (!args[0]->IsString())
-        return VException("First argument must be string.");
+        return NanThrowTypeError("First argument must be string.");
 
     String::AsciiValue file_name(args[0]->ToString());
 
     AsyncAnimatedGif *gif = ObjectWrap::Unwrap<AsyncAnimatedGif>(args.This());
     gif->output_file = *file_name;
 
-    return Undefined();
+    NanReturnUndefined();
 }
 
-Handle<Value>
-AsyncAnimatedGif::SetTmpDir(const Arguments &args)
+NAN_METHOD(AsyncAnimatedGif::SetTmpDir)
 {
-    HandleScope scope;
+    NanScope();
 
     if (args.Length() != 1)
-        return VException("One argument required - path to tmp dir.");
+        return NanThrowError("One argument required - path to tmp dir.");
 
     if (!args[0]->IsString())
-        return VException("First argument must be string.");
+        return NanThrowTypeError("First argument must be string.");
 
-    String::AsciiValue tmp_dir(args[0]->ToString());
+    String::AsciiValue tmp_dir(args[0].As<String>());
 
     AsyncAnimatedGif *gif = ObjectWrap::Unwrap<AsyncAnimatedGif>(args.This());
     gif->tmp_dir = *tmp_dir;
 
-    return Undefined();
+    NanReturnUndefined();
 }
-

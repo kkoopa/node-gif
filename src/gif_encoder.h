@@ -6,6 +6,14 @@
 
 #include "common.h"
 
+#ifndef FALSE
+    #define FALSE (0)
+#endif
+
+#ifndef TRUE
+    #define TRUE (!FALSE)
+#endif
+
 struct GifImage {
     int size, mem_size;
     unsigned char *gif;
@@ -31,7 +39,17 @@ public:
 
     void encode();
     const unsigned char *get_gif() const;
-    const int get_gif_len() const;
+    int get_gif_len() const;
+
+    class EncodeWorker : public NanAsyncWorker {
+    public:
+        EncodeWorker(NanCallback *callback, char *buf_data=NULL) : NanAsyncWorker(callback), gif(NULL), gif_len(0), buf_data(buf_data) {};
+
+    protected:
+        char *gif;
+        int gif_len;
+        char *buf_data;
+    };
 };
 
 class AnimatedGifEncoder {
@@ -44,17 +62,30 @@ class AnimatedGifEncoder {
     GifFileType *gif_file;
     int color_map_size;
 
+    OutputFunc write_func;
+    void *write_user_data;
     bool headers_set;
     Color transparency_color;
 
     std::string file_name;
-    OutputFunc write_func;
-    void *write_user_data;
 
     void end_encoding();
 public:
     AnimatedGifEncoder(int wwidth, int hheight, buffer_type bbuf_type);
     ~AnimatedGifEncoder();
+
+    class EncodeWorker : public NanAsyncWorker {
+    public:
+        EncodeWorker(NanCallback *callback) : NanAsyncWorker(callback) {
+              gif = NULL;
+              gif_len = 0;
+        };
+
+    protected:
+        char *gif;
+        int gif_len;
+        char *buf_data;
+    };
 
     void new_frame(unsigned char *data, int delay=0); // delay in 1/100s of a second
     void finish();
@@ -65,8 +96,8 @@ public:
     void set_output_file(const char *ffile_name);
     void set_output_func(OutputFunc func, void* user_data);
 
-    const unsigned char *get_gif() const;
-    const int get_gif_len() const;
+    unsigned char *get_gif() const;
+    int get_gif_len() const;
 };
 
 class RGBator {

@@ -5,7 +5,6 @@
       'sources': [
         'src/animated_gif.cpp',
         'src/async_animated_gif.cpp',
-        'src/buffer_compat.cpp',
         'src/common.cpp',
         'src/dynamic_gif_stack.cpp',
         'src/gif.cpp',
@@ -15,9 +14,8 @@
         'src/quantize.cpp',
         'src/utils.cpp'
       ],
-      'dependencies': [
-        '<(module_root_dir)/deps/giflib/giflib.gyp:giflib'
-      ],
+      "include_dirs" : ["<!(node -p -e \"require('path').dirname(require.resolve('nan'))\")"],
+      "libraries": ["-lgif"],
       'cflags_cc!': [ '-fno-exceptions' ],
       'conditions': [
           ['OS=="mac"', {

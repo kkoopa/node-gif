@@ -9,7 +9,26 @@
 #include "gif_encoder.h"
 #include "common.h"
 
-struct push_request {
+class PushWorker : public NanAsyncWorker {
+public:
+    PushWorker(unsigned int push_id, unsigned int fragment_id, const char *tmp_dir, unsigned char *data_buf, int x, int y, int w, int h) : NanAsyncWorker(NULL), push_id(push_id), fragment_id(fragment_id), tmp_dir(tmp_dir), data_size(w * h * 3), x(x), y(y), w(w), h(h) {
+        data = new unsigned char[sizeof(*data) * w * h * 3];
+        if (!data) {
+            throw "malloc in AsyncAnimatedGif::Push failed.";
+        }
+
+        memcpy(data, data_buf, w * h * 3);
+    };
+
+    ~PushWorker() {
+        delete[] data;
+    }
+
+    void Execute();
+    void HandleOKCallback();
+    void HandleErrorCallback();
+
+protected:
     unsigned int push_id;
     unsigned int fragment_id;
     const char *tmp_dir;
@@ -20,12 +39,6 @@ struct push_request {
 
 class AsyncAnimatedGif;
 
-struct async_encode_request {
-    AsyncAnimatedGif *gif_obj;
-    v8::Persistent<v8::Function> callback;
-    char *error;
-};
-
 class AsyncAnimatedGif : public node::ObjectWrap {
     int width, height;
     buffer_type buf_type;
@@ -34,12 +47,6 @@ class AsyncAnimatedGif : public node::ObjectWrap {
 
     unsigned int push_id, fragment_id;
     std::string tmp_dir, output_file;
-
-    static void EIO_Push(eio_req *req);
-    static int EIO_PushAfter(eio_req *req);
-
-    static void EIO_Encode(eio_req *req);
-    static int EIO_EncodeAfter(eio_req *req);
 
     static unsigned char *init_frame(int width, int height, Color &transparency_color);
     static void push_fragment(unsigned char *frame, int width, int height, buffer_type buf_type,
@@ -53,13 +60,25 @@ public:
     v8::Handle<v8::Value> Push(unsigned char *data_buf, int x, int y, int w, int h);
     void EndPush();
 
-    static v8::Handle<v8::Value> New(const v8::Arguments &args);
-    static v8::Handle<v8::Value> Push(const v8::Arguments &args);
-    static v8::Handle<v8::Value> Encode(const v8::Arguments &args);
-    static v8::Handle<v8::Value> EndPush(const v8::Arguments &args);
-    static v8::Handle<v8::Value> SetOutputFile(const v8::Arguments &args);
-    static v8::Handle<v8::Value> SetTmpDir(const v8::Arguments &args);
+    class AnimatedGifEncodeWorker : public AnimatedGifEncoder::EncodeWorker {
+    public:
+        AnimatedGifEncodeWorker(NanCallback *callback, AsyncAnimatedGif *gif) : AnimatedGifEncoder::EncodeWorker(callback), gif_obj(gif) {
+        };
+
+        void Execute();
+        void HandleOKCallback();
+        void HandleErrorCallback();
+
+    private:
+        AsyncAnimatedGif *gif_obj;
+    };
+
+    static NAN_METHOD(New);
+    static NAN_METHOD(Push);
+    static NAN_METHOD(Encode);
+    static NAN_METHOD(EndPush);
+    static NAN_METHOD(SetOutputFile);
+    static NAN_METHOD(SetTmpDir);
 };
 
 #endif
-
